@@ -126,45 +126,61 @@ function Set-DefaultUnattendedXML {
 
     Write-Host "Next available order for RunSynchronousCommand is $nextOrder"
 
-    # Add command to extract Specialize.ps1
+    # Add command to extract Specialize.ps1 (keep this in specialize)
     $extractCommand = $xmlDoc.CreateElement("RunSynchronousCommand", "urn:schemas-microsoft-com:unattend")
     $extractCommand.SetAttributeNode($wcmAttr)
-
     $path = $xmlDoc.CreateElement("Path", "urn:schemas-microsoft-com:unattend")
     $path.InnerText = "powershell.exe -WindowStyle Normal -NoProfile -Command `"`$xml = [xml]::new(); `$xml.Load('C:\Windows\Panther\unattend.xml'); `$sb = [scriptblock]::Create( `$xml.unattend.EDS.CopyScript ); Invoke-Command -ScriptBlock `$sb -ArgumentList $EDSFolderName;`""
-
     $description = $xmlDoc.CreateElement("Description", "urn:schemas-microsoft-com:unattend")
     $description.InnerText = "Execute CopySpecialize Script embedded inside unattend.xml"
-
     $order = $xmlDoc.CreateElement("Order", "urn:schemas-microsoft-com:unattend")
     $order.InnerText = "$nextOrder"
-
     $extractCommand.AppendChild($path) | Out-Null
     $extractCommand.AppendChild($description) | Out-Null
     $extractCommand.AppendChild($order) | Out-Null
-
     $runSync.AppendChild($extractCommand) | Out-Null
 
-    # Add command to run Specialize.ps1
-    $runCommand = $xmlDoc.CreateElement("RunSynchronousCommand", "urn:schemas-microsoft-com:unattend")
-    $wcmAttr2 = $xmlDoc.CreateAttribute("wcm", "action", $wcmNamespaceUri)
-    $wcmAttr2.Value = "add"
-    $runCommand.SetAttributeNode($wcmAttr2)
-
-    $path = $xmlDoc.CreateElement("Path", "urn:schemas-microsoft-com:unattend")
-    $path.InnerText = "powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Setup\$EDSFolderName\Specialize.ps1"
-
-    $description = $xmlDoc.CreateElement("Description", "urn:schemas-microsoft-com:unattend")
-    $description.InnerText = "Execute Specialize-Script"
-
+    # DO NOT add Specialize.ps1 execution to specialize RunSynchronous anymore!
+    # Instead, add it to oobeSystem/FirstLogonCommands
+    # Find oobeSystem settings/component
+    $oobeSettings = $xmlDoc.SelectSingleNode("//u:settings[@pass='oobeSystem']", $nsMgr)
+    if (-not $oobeSettings) {
+        $oobeSettings = $xmlDoc.CreateElement("settings", "urn:schemas-microsoft-com:unattend")
+        $oobeSettings.SetAttribute("pass", "oobeSystem")
+        $xmlDoc.DocumentElement.AppendChild($oobeSettings) | Out-Null
+    }
+    $shellComponent = $oobeSettings.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)
+    if (-not $shellComponent) {
+        $shellComponent = $xmlDoc.CreateElement("component", "urn:schemas-microsoft-com:unattend")
+        $shellComponent.SetAttribute("name", "Microsoft-Windows-Shell-Setup")
+        $shellComponent.SetAttribute("processorArchitecture", "amd64")
+        $shellComponent.SetAttribute("publicKeyToken", "31bf3856ad364e35")
+        $shellComponent.SetAttribute("language", "neutral")
+        $shellComponent.SetAttribute("versionScope", "nonSxS")
+        $oobeSettings.AppendChild($shellComponent) | Out-Null
+    }
+    $firstLogon = $shellComponent.SelectSingleNode("u:FirstLogonCommands", $nsMgr)
+    if (-not $firstLogon) {
+        $firstLogon = $xmlDoc.CreateElement("FirstLogonCommands", "urn:schemas-microsoft-com:unattend")
+        $shellComponent.AppendChild($firstLogon) | Out-Null
+    }
+    # Find max order
+    $orders = @()
+    foreach ($cmd in $firstLogon.SelectNodes("u:SynchronousCommand/u:Order", $nsMgr)) {
+        if ($cmd.InnerText -match '^\\d+$') { $orders += [int]$cmd.InnerText }
+    }
+    $nextOrderFL = ($orders | Measure-Object -Maximum).Maximum
+    if (-not $nextOrderFL) { $nextOrderFL = 0 }
+    $nextOrderFL++
+    # Add new SynchronousCommand for Specialize.ps1
+    $syncCmd = $xmlDoc.CreateElement("SynchronousCommand", "urn:schemas-microsoft-com:unattend")
     $order = $xmlDoc.CreateElement("Order", "urn:schemas-microsoft-com:unattend")
-    $order.InnerText = "$(($nextOrder + 1))"
-
-    $runCommand.AppendChild($path) | Out-Null
-    $runCommand.AppendChild($description) | Out-Null
-    $runCommand.AppendChild($order) | Out-Null
-
-    $runSync.AppendChild($runCommand) | Out-Null
+    $order.InnerText = "$nextOrderFL"
+    $cmdLine = $xmlDoc.CreateElement("CommandLine", "urn:schemas-microsoft-com:unattend")
+    $cmdLine.InnerText = "powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Setup\$EDSFolderName\Specialize.ps1"
+    $syncCmd.AppendChild($order) | Out-Null
+    $syncCmd.AppendChild($cmdLine) | Out-Null
+    $firstLogon.AppendChild($syncCmd) | Out-Null
 
     # Create EDS element if it doesn't exist
     $eds = $xmlDoc.DocumentElement.SelectSingleNode("EDS")  # FIX: use DocumentElement
@@ -263,6 +279,96 @@ function Set-UnattendedUserInput {
         Write-Warning "Failed to save XML: $_"
         return $false
     }
+}
+
+function Set-LocalAccount {
+    param(
+        [Parameter(Mandatory=$true)]
+        [xml]$xmlDoc,
+        [Parameter(Mandatory=$true)]
+        [string]$UserName,
+        [Parameter(Mandatory=$true)]
+        [string]$PasswordBase64
+    )
+
+    $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
+    $nsMgr.AddNamespace("u", "urn:schemas-microsoft-com:unattend") | Out-Null
+    $nsMgr.AddNamespace("wcm", "http://schemas.microsoft.com/WMIConfig/2002/State") | Out-Null
+
+    # Find the oobeSystem settings/component
+    $settings = $xmlDoc.SelectSingleNode("//u:settings[@pass='oobeSystem']", $nsMgr)
+    if (-not $settings) {
+        $settings = $xmlDoc.CreateElement("settings", "urn:schemas-microsoft-com:unattend")
+        $settings.SetAttribute("pass", "oobeSystem")
+        $xmlDoc.DocumentElement.AppendChild($settings) | Out-Null
+    }
+    $component = $settings.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup']", $nsMgr)
+    if (-not $component) {
+        $component = $xmlDoc.CreateElement("component", "urn:schemas-microsoft-com:unattend")
+        $component.SetAttribute("name", "Microsoft-Windows-Shell-Setup")
+        $component.SetAttribute("processorArchitecture", "amd64")
+        $component.SetAttribute("publicKeyToken", "31bf3856ad364e35")
+        $component.SetAttribute("language", "neutral")
+        $component.SetAttribute("versionScope", "nonSxS")
+        $settings.AppendChild($component) | Out-Null
+    }
+    # Find or create <UserAccounts>/<LocalAccounts>
+    $userAccounts = $component.SelectSingleNode("u:UserAccounts", $nsMgr)
+    if (-not $userAccounts) {
+        $userAccounts = $xmlDoc.CreateElement("UserAccounts", "urn:schemas-microsoft-com:unattend")
+        $component.AppendChild($userAccounts) | Out-Null
+    }
+    $localAccounts = $userAccounts.SelectSingleNode("u:LocalAccounts", $nsMgr)
+    if (-not $localAccounts) {
+        $localAccounts = $xmlDoc.CreateElement("LocalAccounts", "urn:schemas-microsoft-com:unattend")
+        $userAccounts.AppendChild($localAccounts) | Out-Null
+    }
+    # Check for existing LocalAccount with the username
+    $existingAccount = $localAccounts.SelectSingleNode("u:LocalAccount[u:Name='$UserName']", $nsMgr)
+    if ($existingAccount) {
+        # Update username and password
+        $existingAccount.SelectSingleNode("u:Name", $nsMgr).InnerText = $UserName
+        $pwNode = $existingAccount.SelectSingleNode("u:Password/u:Value", $nsMgr)
+        if ($pwNode) {
+            $pwNode.InnerText = $PasswordBase64
+        } else {
+            # Add password node if missing
+            $pwParent = $xmlDoc.CreateElement("Password", "urn:schemas-microsoft-com:unattend")
+            $pwValue = $xmlDoc.CreateElement("Value", "urn:schemas-microsoft-com:unattend")
+            $pwValue.InnerText = $PasswordBase64
+            $pwPlain = $xmlDoc.CreateElement("PlainText", "urn:schemas-microsoft-com:unattend")
+            $pwPlain.InnerText = "false"
+            $pwParent.AppendChild($pwValue) | Out-Null
+            $pwParent.AppendChild($pwPlain) | Out-Null
+            $existingAccount.AppendChild($pwParent) | Out-Null
+        }
+    } else {
+        # Create new LocalAccount
+        $localAccount = $xmlDoc.CreateElement("LocalAccount", "urn:schemas-microsoft-com:unattend")
+        $wcmAttr = $xmlDoc.CreateAttribute("wcm", "action", "http://schemas.microsoft.com/WMIConfig/2002/State")
+        $wcmAttr.Value = "add"
+        $localAccount.SetAttributeNode($wcmAttr)
+        $name = $xmlDoc.CreateElement("Name", "urn:schemas-microsoft-com:unattend")
+        $name.InnerText = $UserName
+        $displayName = $xmlDoc.CreateElement("DisplayName", "urn:schemas-microsoft-com:unattend")
+        $displayName.InnerText = $UserName
+        $group = $xmlDoc.CreateElement("Group", "urn:schemas-microsoft-com:unattend")
+        $group.InnerText = "Administrators"
+        $pwParent = $xmlDoc.CreateElement("Password", "urn:schemas-microsoft-com:unattend")
+        $pwValue = $xmlDoc.CreateElement("Value", "urn:schemas-microsoft-com:unattend")
+        $pwValue.InnerText = $PasswordBase64
+        $pwPlain = $xmlDoc.CreateElement("PlainText", "urn:schemas-microsoft-com:unattend")
+        $pwPlain.InnerText = "false"
+        $pwParent.AppendChild($pwValue) | Out-Null
+        $pwParent.AppendChild($pwPlain) | Out-Null
+        $localAccount.AppendChild($name) | Out-Null
+        $localAccount.AppendChild($displayName) | Out-Null
+        $localAccount.AppendChild($group) | Out-Null
+        $localAccount.AppendChild($pwParent) | Out-Null
+        $localAccounts.AppendChild($localAccount) | Out-Null
+    }
+    $xmlDoc.save($script:unattendPath)
+    return $true
 }
 
 Export-ModuleMember -Function *

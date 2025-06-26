@@ -56,8 +56,8 @@ function Install-Automated {
     $deviceName = "EDS-Auto-$randomNumber"
 
     if ($Debugging) {
-        Write-Host "Debugging mode enabled. Using random device name: $deviceName"
         $serialNumber = "SN-$randomNumber"  # Placeholder for serial number
+        Write-Host "Debugging mode enabled. Using random serial number: $serialNumber"
     } else {
         $serialNumber = Get-SerialNumber
     }
@@ -65,7 +65,7 @@ function Install-Automated {
     $registerInfo = @{
         deviceName = $deviceName
         deviceType = Get-DeviceType
-        deviceSerial = "GM0XNWDG"
+        deviceSerial = $serialNumber
     }
 
     $guiPath = "$PSScriptRoot\..\..\GUI"
@@ -166,6 +166,7 @@ function Install-Automated {
 
         Write-Host "Updating device name in unattend.xml to $($jobContext.deviceName)"
         Set-UnattendedDeviceName -deviceName $jobContext.deviceName -xmlDoc $unattendXml
+        Set-LocalAccount -xmlDoc $unattendXml -UserName 'root' -PasswordBase64 $jobContext.localPassword
         # Convert jobContext to hashtable for Set-UnattendedUserInput
         $jobContextHash = @{
             deviceToken = $deviceToken
@@ -174,6 +175,7 @@ function Install-Automated {
             edsFolderName = $EDSFolderName
         }
         $jobContext.PSObject.Properties | ForEach-Object { $jobContextHash[$_.Name] = $_.Value }
+        $jobContextHash['localPassword'] = ""
         Write-Host "Updating user input in unattend.xml"
         Set-UnattendedUserInput -xmlDoc $unattendXml -UserInput $jobContextHash
     
@@ -183,6 +185,16 @@ function Install-Automated {
 
             Write-Host "Starting installation with unattended.xml $unattendPath"
             New-Item -Path "$installDrive\Temp" -ItemType Directory -Force | Out-Null
+            # Check if autounattend.xml already exists in the root of the install drive
+            $autoUnattendPath = Join-Path $installDrive 'autounattend.xml'
+            $autoUnattendOldPath = Join-Path $installDrive 'autounattend_old.xml'
+            if (Test-Path $autoUnattendPath) {
+                Move-Item -Path $autoUnattendPath -Destination $autoUnattendOldPath -Force
+            }
+            # Copy the new unattend.xml to the root of the install drive as autounattend.xml
+            Copy-Item -Path $unattendPath -Destination $autoUnattendPath -Force
+
+            # Also save a backup in the Temp folder
             Copy-Item -Path $unattendPath -Destination "$installDrive\Temp\unattended_save.xml" -Force
             Start-Process -FilePath "$WinPeDrive\setup.exe" -ArgumentList "/unattend:$unattendPath" -NoNewWindow
         } else {

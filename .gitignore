@@ -3,3 +3,4 @@ logo.png
 dist
 EDS\Windows\deviceconfig.json
 deviceconfig.json
+**/*/unattended.xml
