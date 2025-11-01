@@ -157,6 +157,43 @@ To apply Windows Updates:
 
 **Note**: Update application can take 10-30 minutes depending on system performance.
 
+### Creating ISO Files
+
+The script can create bootable ISO files instead of (or in addition to) USB drives. This is useful for:
+
+- Virtual machine deployment
+- Network-based installation
+- Archiving custom Windows installations
+- Burning to DVD (though USB is recommended)
+
+**Requirements:**
+
+- Windows Assessment and Deployment Kit (ADK) must be installed
+- Download from: https://go.microsoft.com/fwlink/?linkid=2196127
+- Only the "Deployment Tools" component is required (approximately 200 MB)
+
+**Usage:**
+
+```powershell
+# Create ISO only (no USB)
+.\Create-Windows11Installer.ps1 -ISOPath "C:\ISOs\Win11.iso" -SkipDownload -SkipUSBCreation -CreateISO
+
+# Create both USB and ISO
+.\Create-Windows11Installer.ps1 -ISOPath "C:\ISOs\Win11.iso" -SkipDownload -USBDrive "E" -CreateISO
+
+# Specify custom ISO output location
+.\Create-Windows11Installer.ps1 -ISOPath "C:\ISOs\Win11.iso" -SkipDownload -SkipUSBCreation -CreateISO -ISOOutputPath "D:\Custom\Win11_Pro_EDS.iso"
+```
+
+The created ISO file will be:
+
+- Bootable on both UEFI and BIOS systems
+- Compatible with virtual machines (Hyper-V, VMware, VirtualBox)
+- Can be mounted directly in Windows 10/11 for installation
+- Includes all customizations and EDS integration
+
+**Note**: If Windows ADK is not installed, the script will prompt you to continue without creating the ISO file.
+
 ### Troubleshooting
 
 **"This script requires administrator privileges"**
@@ -183,9 +220,22 @@ To apply Windows Updates:
 
 **Update application fails**
 
-- Ensure the update matches your Windows version (24H2, 23H2, etc.)
+- Ensure the update matches your Windows version (25H2, 24H2, 23H2, etc.)
 - Check that the `.msu` file is not corrupted
 - Verify you have enough disk space
+
+**ISO creation fails with "oscdimg.exe not found"**
+
+- Install Windows Assessment and Deployment Kit (ADK)
+- Download from: https://go.microsoft.com/fwlink/?linkid=2196127
+- Only "Deployment Tools" component is needed
+- After installation, restart PowerShell and run the script again
+
+**WIM file too large for USB/ISO**
+
+- The script automatically uses maximum compression during export
+- For files larger than 4GB on FAT32, automatic splitting is performed
+- Consider using a larger USB drive or creating an ISO file instead
 
 ### Safety Features
 
@@ -269,7 +319,8 @@ The USB drive is now bootable and ready to use!
 
 - ISO download still requires manual download from Microsoft website (no direct API available)
 - Cumulative update integration requires manual download
-- FAT32 filesystem limits individual file size to 4 GB
+- FAT32 filesystem limits individual file size to 4 GB (automatically handled via WIM splitting)
+- ISO creation requires Windows ADK to be installed
 - Some advanced DISM operations may require Windows ADK
 
 ### Support
