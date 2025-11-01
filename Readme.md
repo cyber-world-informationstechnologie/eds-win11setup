@@ -1,3 +1,15 @@
+# Enterprise Deployment Suite (EDS) - Windows 11 Setup
+
+**Related documentation:**
+
+- [Automation/README.md: Windows 11 Installer Automation Guide](Create-Windows11Installer.md)
+- [WebService.md: ISO Creation Web Service API](WebService.md)
+
+## Ways to Create Windows Images
+
+- **Interactive PowerShell script:** Use `automation/Create-Windows11Installer.ps1` for step-by-step creation of USB or ISO images with EDS integration. See [automation/README.md](automation/README.md) for details and usage examples.
+- **Web Service API:** Use the HTTP API described in [WebService.md](WebService.md) to trigger image creation remotely, with support for callback notifications and custom parameters.
+
 # Overview
 
 This repository is a companion repository for [Enterprise-Deployment-Suite](https://github.com/markush97/Enterprise-Deployment-Suite). This repo contains the necessary files and guides to allow for creation of a highly customizable Windows11 Installer - either via USB-Stick or PXE.
@@ -11,11 +23,11 @@ To be able to use these scripts with a default Windows USB-Installer, you have t
 1. Download a Windows 10 or Windows 11 .iso file from Microsoft, such as Win11_24H2_English_x64.iso.
 2. Mount that .iso image in File Explorer. This tutorial assumes that the .iso image is mounted to the D:\ drive.
 3. Plug in a USB flash drive with a capacity of at least 8 GiB. Using diskpart.exe or diskmgmt.msc, wipe that drive, create a single partition and format it with the FAT32 file system. This tutorial assumes that the flash drive is assigned the E:\ drive letter.
-4. Launch a PowerShell session with administrative privileges: 
-    * Copy the contents of the .iso image to the flash drive, but omit the large install.wim file:
-        > Copy-Item -Path 'D:\*' -Destination 'E:\' -Recurse -Force -Exclude 'install.wim';
-    * Copy the large install.wim file to the flash drive in chunks of 2 GiB: 
-        > Dism.exe /Split-Image /ImageFile:"D:\sources\install.wim" /SWMFile:"E:\sources\install.swm" /FileSize:2048;
+4. Launch a PowerShell session with administrative privileges:
+   - Copy the contents of the .iso image to the flash drive, but omit the large install.wim file:
+     > Copy-Item -Path 'D:\*' -Destination 'E:\' -Recurse -Force -Exclude 'install.wim';
+   - Copy the large install.wim file to the flash drive in chunks of 2 GiB:
+     > Dism.exe /Split-Image /ImageFile:"D:\sources\install.wim" /SWMFile:"E:\sources\install.swm" /FileSize:2048;
 5. Modify your boot.wim (and optionally install.wim) like instructed later in this document.
 6. Unmount the .iso image.
 7. Copy the "EDS" folder of this repository to the root of the USB-Stick
