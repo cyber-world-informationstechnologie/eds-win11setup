@@ -59,7 +59,10 @@ param(
     [switch]$CreateISO,
 
     [Parameter()]
-    [string]$ISOOutputPath
+    [string]$ISOOutputPath,
+
+    [Parameter()]
+    [string]$EDSFolder
 )
 
 $ErrorActionPreference = 'Stop'
@@ -343,40 +346,28 @@ function Get-WimImageInfo {
 # Get Windows version information from WIM
 function Get-WindowsVersion {
     param([string]$WimPath, [int]$ImageIndex = 1)
-    
     Write-Host "Detecting Windows version..." -ForegroundColor Gray
-    
-    # Get detailed image info for the first/specified index
     $dismOutput = & dism /Get-WimInfo /WimFile:"$WimPath" /Index:$ImageIndex 2>&1 | Out-String
-    
-    # Extract version info (handles both English and German output)
-    # Example: Version: 10.0.26100.1 or Version : 10.0.26100.1
     if ($dismOutput -match '(Version|Build)\s*:\s*(\d+\.\d+\.\d+)') {
         $fullVersion = $matches[2]
         $buildNumber = $fullVersion.Split('.')[2]
-        
-        # Map build numbers to marketing versions
-        # Source: https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information
+        # Load version map from YAML
+        $versionMapPath = Join-Path $PSScriptRoot 'WindowsVersionMap.yaml'
         $versionMap = @{
-            '26100' = '25H2'  # Windows 11, version 25H2 (2025)
-            '22631' = '23H2'  # Windows 11, version 23H2
-            '22621' = '22H2'  # Windows 11, version 22H2
-            '22000' = '21H2'  # Windows 11, version 21H2
         }
-        
+        if (Test-Path $versionMapPath) {
+            $versionMap = ConvertFrom-Yaml (Get-Content $versionMapPath -Raw)
+        }
         $marketingVersion = $versionMap[$buildNumber]
         if (-not $marketingVersion) {
-            # Default to build number if unknown
             $marketingVersion = "Build $buildNumber"
         }
-        
         return @{
             FullVersion = $fullVersion
             BuildNumber = $buildNumber
             MarketingVersion = $marketingVersion
         }
     }
-    
     return $null
 }
 
@@ -424,8 +415,11 @@ function Copy-EDSFolder {
     Write-Step "Copying EDS folder to target"
     
     # Get the repository root (automation folder -> eds-win11setup)
-    $scriptRoot = Split-Path $PSScriptRoot -Parent
-    $edsSource = Join-Path $scriptRoot "EDS"
+    $edsSource = $EDSFolder
+    if (-not $edsSource -or $edsSource -eq "") {
+        $scriptRoot = Split-Path $PSScriptRoot -Parent
+        $edsSource = Join-Path $scriptRoot "EDS"
+    }
     
     Write-Host "Looking for EDS folder at: $edsSource" -ForegroundColor Gray
     

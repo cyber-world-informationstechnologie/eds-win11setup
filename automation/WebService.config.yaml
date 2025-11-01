@@ -5,3 +5,5 @@ auth_header: "Bearer SuperSecretToken123"
 port: 8080
 input_base: "C:\ISOs"
 output_base: "C:\projekte\eds-win11setup\Dist\WinIso"
+installer_script: ""
+eds_folder: ""

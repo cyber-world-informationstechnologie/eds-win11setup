@@ -1,0 +1,8 @@
+# Windows 11 build number to marketing version mapping
+# Source: https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information
+
+26100: "25H2"
+25931: "24H2"
+22631: "23H2"
+22621: "22H2"
+22000: "21H2"

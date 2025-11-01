@@ -15,6 +15,13 @@ $AuthHeader = $config.auth_header
 $Port = $config.port
 $InputBase = $config.input_base
 $OutputBase = $config.output_base
+$InstallerScript = $config.installer_script
+$EdsFolder = $config.eds_folder
+
+# If installer_script is not set, default to same folder as WebService.ps1
+if (-not $InstallerScript -or $InstallerScript -eq "") {
+    $InstallerScript = Join-Path $PSScriptRoot 'Create-Windows11Installer.ps1'
+}
 
 Add-Type -AssemblyName System.Net.HttpListener
 $listener = New-Object System.Net.HttpListener
@@ -88,10 +95,11 @@ while ($listener.IsListening) {
             $isoOutputPath = Join-Path $OutputBase $isoName
             # Build installer command
             $cmd = @()
-            $cmd += "& 'c:\projekte\eds-win11setup\automation\Create-Windows11Installer.ps1'"
+            $cmd += "& '$InstallerScript'"
             $cmd += "-ISOPath '$isoPath' -SkipDownload -SkipUSBCreation -CreateISO -ISOOutputPath '$isoOutputPath'"
             if ($cuPath) { $cmd += "-CUPath '$cuPath'" }
             if ($winEdition) { $cmd += "-WinEdition '$winEdition'" }
+            if ($EdsFolder -and $EdsFolder -ne "") { $cmd += "-EDSFolder '$EdsFolder'" }
             $fullCmd = $cmd -join ' '
             Write-Host "Starting ISO creation: $fullCmd" -ForegroundColor Cyan
             try {
