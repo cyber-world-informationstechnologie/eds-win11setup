@@ -499,7 +499,12 @@ function New-BootableISO {
     }
     
     Write-Host "Creating ISO (this may take several minutes)..." -ForegroundColor Cyan
-    
+    # Ensure output directory exists
+    $isoDir = Split-Path $OutputISO -Parent
+    if (-not (Test-Path $isoDir)) {
+        Write-Host "Creating ISO output directory: $isoDir" -ForegroundColor Gray
+        New-Item -ItemType Directory -Path $isoDir -Force | Out-Null
+    }
     # oscdimg parameters for UEFI + BIOS bootable ISO
     $oscdimgArgs = @(
         '-m',                           # Ignore maximum image size
@@ -511,15 +516,11 @@ function New-BootableISO {
         "`"$SourceFolder`"",            # Source folder
         "`"$OutputISO`""                # Output ISO
     )
-    
     Write-Host "Running: oscdimg $($oscdimgArgs -join ' ')" -ForegroundColor Gray
-    
     $process = Start-Process -FilePath $oscdimg -ArgumentList $oscdimgArgs -Wait -NoNewWindow -PassThru
-    
     if ($process.ExitCode -ne 0) {
         throw "oscdimg failed with exit code: $($process.ExitCode)"
     }
-    
     if (Test-Path $OutputISO) {
         $isoSize = (Get-Item $OutputISO).Length
         $isoSizeGB = [math]::Round($isoSize / 1GB, 2)

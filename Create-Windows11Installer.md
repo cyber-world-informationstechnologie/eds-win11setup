@@ -1,5 +1,10 @@
 # Automation Scripts
 
+**Related documentation:**
+
+- [Automation/README.md: Windows 11 Installer Automation Guide](automation/README.md)
+- [Automation/WebService.README.md: ISO Creation Web Service API](automation/WebService.README.md)
+
 This folder contains automation scripts to simplify the creation and maintenance of Windows 11 installation media with EDS integration.
 
 ## Create-Windows11Installer.ps1
