@@ -1,3 +1,24 @@
+function Save-UnattendedXml {
+    param(
+        [Parameter(Mandatory=$true)]
+        [xml]$xmlDoc,
+        [Parameter(Mandatory=$true)]
+        [string]$filePath
+    )
+    # Use UTF-8 without BOM to avoid encoding issues
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $xmlWriterSettings = New-Object System.Xml.XmlWriterSettings
+    $xmlWriterSettings.Indent = $true
+    $xmlWriterSettings.Encoding = $utf8NoBom
+    $xmlWriterSettings.OmitXmlDeclaration = $false
+    $xmlWriter = [System.Xml.XmlWriter]::Create($filePath, $xmlWriterSettings)
+    try {
+        $xmlDoc.save($xmlWriter)
+    } finally {
+        $xmlWriter.Close()
+    }
+}
+
 function Set-DefaultUnattendedXML {
     param(
         [string]$EDSFolderName = "EDS",
@@ -167,13 +188,14 @@ function Set-DefaultUnattendedXML {
     # Find max order
     $orders = @()
     foreach ($cmd in $firstLogon.SelectNodes("u:SynchronousCommand/u:Order", $nsMgr)) {
-        if ($cmd.InnerText -match '^\\d+$') { $orders += [int]$cmd.InnerText }
+        if ($cmd.InnerText -match '^\d+$') { $orders += [int]$cmd.InnerText }
     }
     $nextOrderFL = ($orders | Measure-Object -Maximum).Maximum
     if (-not $nextOrderFL) { $nextOrderFL = 0 }
     $nextOrderFL++
     # Add new SynchronousCommand for Specialize.ps1
     $syncCmd = $xmlDoc.CreateElement("SynchronousCommand", "urn:schemas-microsoft-com:unattend")
+    $syncCmd.SetAttribute("action", "http://schemas.microsoft.com/WMIConfig/2002/State", "add")
     $order = $xmlDoc.CreateElement("Order", "urn:schemas-microsoft-com:unattend")
     $order.InnerText = "$nextOrderFL"
     $cmdLine = $xmlDoc.CreateElement("CommandLine", "urn:schemas-microsoft-com:unattend")
@@ -195,13 +217,7 @@ function Set-DefaultUnattendedXML {
     $eds.AppendChild($copyScript) | Out-Null
 
     # When saving, ensure XML declaration is present
-    $xmlWriterSettings = New-Object System.Xml.XmlWriterSettings
-    $xmlWriterSettings.Indent = $true
-    $xmlWriterSettings.Encoding = [System.Text.Encoding]::UTF8
-    $xmlWriterSettings.OmitXmlDeclaration = $false
-    $xmlWriter = [System.Xml.XmlWriter]::Create($tempXmlPath, $xmlWriterSettings)
-    $xmlDoc.save($xmlWriter)
-    $xmlWriter.Close()
+    Save-UnattendedXml -xmlDoc $xmlDoc -filePath $tempXmlPath
     [xml]$script:unattendXml = Get-Content -Path $tempXmlPath -Raw
 }
 
@@ -231,7 +247,8 @@ function Set-UnattendedDeviceName {
     }
     $computerName.InnerText = $deviceName
 
-    $xmlDoc.save($script:unattendPath)
+    # Use helper function to maintain encoding
+    Save-UnattendedXml -xmlDoc $xmlDoc -filePath $script:unattendPath
     return $true
 }
 
@@ -260,6 +277,10 @@ function Set-UnattendedUserInput {
         $eds.AppendChild($userInputBlock)  | Out-Null
     }
 
+    if ($UserInput.ContainsKey('localPassword')) {
+        $UserInput.Remove('localPassword')
+    }
+
     # Iterate through the UserInput hashtable and create elements
     foreach ($key in $UserInput.Keys) {
         $value = $UserInput[$key]
@@ -274,7 +295,8 @@ function Set-UnattendedUserInput {
     }
 
     try {
-        $xmlDoc.save($script:unattendPath)
+        # Use helper function to maintain encoding
+        Save-UnattendedXml -xmlDoc $xmlDoc -filePath $script:unattendPath
     } catch {
         Write-Warning "Failed to save XML: $_"
         return $false
@@ -367,7 +389,9 @@ function Set-LocalAccount {
         $localAccount.AppendChild($pwParent) | Out-Null
         $localAccounts.AppendChild($localAccount) | Out-Null
     }
-    $xmlDoc.save($script:unattendPath)
+    
+    # Use helper function to maintain encoding
+    Save-UnattendedXml -xmlDoc $xmlDoc -filePath $script:unattendPath
     return $true
 }
 

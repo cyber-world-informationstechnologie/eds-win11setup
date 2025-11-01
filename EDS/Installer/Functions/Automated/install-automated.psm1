@@ -175,16 +175,21 @@ function Install-Automated {
             edsFolderName = $EDSFolderName
         }
         $jobContext.PSObject.Properties | ForEach-Object { $jobContextHash[$_.Name] = $_.Value }
-        $jobContextHash['localPassword'] = ""
+
         Write-Host "Updating user input in unattend.xml"
         Set-UnattendedUserInput -xmlDoc $unattendXml -UserInput $jobContextHash
-    
+
+        $installDrive = Get-InstallationDrive -EDSFolderName $EDSFolderName
+
+        # Save copy of the updated unattend.xml to the Temp folder
+        Write-Host "Saving updated unattend.xml to Temp folder: $installDrive\Temp\unattended_save.xml"
+        New-Item -Path "$installDrive\Temp" -ItemType Directory -Force | Out-Null
+        Copy-Item -Path $unattendPath -Destination "$installDrive\Temp\unattended_save.xml" -Force
+
         Write-Host "Starting installation process for device"
         if ($DryRun -ne $true) {
-            $installDrive = Get-InstallationDrive -EDSFolderName $EDSFolderName
-
             Write-Host "Starting installation with unattended.xml $unattendPath"
-            New-Item -Path "$installDrive\Temp" -ItemType Directory -Force | Out-Null
+            
             # Check if autounattend.xml already exists in the root of the install drive
             $autoUnattendPath = Join-Path $installDrive 'autounattend.xml'
             $autoUnattendOldPath = Join-Path $installDrive 'autounattend_old.xml'
@@ -194,8 +199,6 @@ function Install-Automated {
             # Copy the new unattend.xml to the root of the install drive as autounattend.xml
             Copy-Item -Path $unattendPath -Destination $autoUnattendPath -Force
 
-            # Also save a backup in the Temp folder
-            Copy-Item -Path $unattendPath -Destination "$installDrive\Temp\unattended_save.xml" -Force
             Start-Process -FilePath "$WinPeDrive\setup.exe" -ArgumentList "/unattend:$unattendPath" -NoNewWindow
         } else {
             Write-Host "Skipping actual setup because of Dry-Run"
