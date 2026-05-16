@@ -218,7 +218,14 @@ function Initialize-USBDrive {
     }
     
     $newDriveLetter = $partition.DriveLetter
-    
+
+    # Mark partition active for legacy BIOS/MBR boot (GPT disks ignore this)
+    $partStyle = (Get-Disk -Number $DiskNumber).PartitionStyle
+    if ($partStyle -eq 'MBR') {
+        Set-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -IsActive $true -ErrorAction SilentlyContinue
+        Write-Host "Partition marked as active (MBR disk)" -ForegroundColor Gray
+    }
+
     Write-Host "Formatting as FAT32..."
     Format-Volume -DriveLetter $newDriveLetter -FileSystem FAT32 -NewFileSystemLabel "WIN11_USB" -Confirm:$false | Out-Null
     
@@ -525,6 +532,82 @@ function New-BootableISO {
     }
 }
 
+# Inject EDS boot customizations into boot.wim (Index 2)
+function Invoke-BootWimModification {
+    param(
+        [string]$TargetPath
+    )
+
+    Write-Step "Modifying boot.wim with EDS customizations"
+
+    $bootWimPath = Join-Path $TargetPath "sources\boot.wim"
+
+    if (-not (Test-Path $bootWimPath)) {
+        Write-Warn "boot.wim not found at: $bootWimPath — skipping boot.wim modification."
+        return
+    }
+
+    # Find bootwim-modifications folder relative to the automation script
+    $scriptRoot = Split-Path $PSScriptRoot -Parent
+    $bootWimModFolder = Join-Path $scriptRoot "bootwim-modifications"
+
+    if (-not (Test-Path $bootWimModFolder)) {
+        Write-Warn "bootwim-modifications folder not found at: $bootWimModFolder — skipping boot.wim modification."
+        return
+    }
+
+    $entrypointSrc = Join-Path $bootWimModFolder "Entrypoint.ps1"
+    $winpeshlSrc   = Join-Path $bootWimModFolder "winpeshl.ini"
+
+    # Clear read-only attribute that may be set after robocopy from an ISO
+    Set-ItemProperty -Path $bootWimPath -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
+
+    $mountDir = Join-Path $OutputPath "bootmount"
+    if (-not (Test-Path $mountDir)) {
+        New-Item -ItemType Directory -Path $mountDir -Force | Out-Null
+    }
+
+    Write-Host "Mounting boot.wim (Index 2 — full Windows Setup image)..." -ForegroundColor Gray
+    & dism /Mount-Wim /WimFile:"$bootWimPath" /Index:2 /MountDir:"$mountDir"
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Failed to mount boot.wim (exit code $LASTEXITCODE) — skipping modification."
+        Remove-Item $mountDir -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    try {
+        if (Test-Path $entrypointSrc) {
+            Write-Host "Injecting Entrypoint.ps1 into root of WinPE image..." -ForegroundColor Gray
+            Copy-Item -Path $entrypointSrc -Destination (Join-Path $mountDir "Entrypoint.ps1") -Force
+        } else {
+            Write-Warn "Entrypoint.ps1 not found at: $entrypointSrc"
+        }
+
+        if (Test-Path $winpeshlSrc) {
+            Write-Host "Injecting winpeshl.ini into Windows\System32..." -ForegroundColor Gray
+            $winpeshlDest = Join-Path $mountDir "Windows\System32\winpeshl.ini"
+            Copy-Item -Path $winpeshlSrc -Destination $winpeshlDest -Force
+        } else {
+            Write-Warn "winpeshl.ini not found at: $winpeshlSrc"
+        }
+
+        Write-Host "Committing changes and unmounting boot.wim..." -ForegroundColor Gray
+        & dism /Unmount-Wim /MountDir:"$mountDir" /Commit
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "boot.wim modified successfully"
+        } else {
+            Write-Warn "boot.wim unmount completed with warnings (exit code $LASTEXITCODE)"
+        }
+    } catch {
+        Write-Warn "Error during boot.wim modification: $($_.Exception.Message)"
+        & dism /Unmount-Wim /MountDir:"$mountDir" /Discard 2>&1 | Out-Null
+    } finally {
+        Remove-Item $mountDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Interactive menu for image selection
 function Select-WindowsImage {
     param([array]$Images)
@@ -733,17 +816,32 @@ function Main {
                 }
                 
                 $usbIndex = -1
-                do {
-                    $usbSelection = Read-Host "`nSelect USB drive (1-$($usbDrives.Count))"
-                    # Try to parse as integer, handle invalid input
-                    $parsed = 0
-                    if ([int]::TryParse($usbSelection, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le $usbDrives.Count) {
-                        $usbIndex = $parsed - 1
+
+                # Auto-select if -USBDrive was specified on the command line
+                if ($USBDrive) {
+                    $normalizedLetter = $USBDrive.TrimEnd(':')
+                    $autoIndex = [array]::FindIndex([object[]]$usbDrives, [Predicate[object]]{ param($d) $d.DriveLetter -eq $normalizedLetter })
+                    if ($autoIndex -ge 0) {
+                        Write-Host "Auto-selecting USB drive ${normalizedLetter}: (specified via -USBDrive parameter)" -ForegroundColor Gray
+                        $usbIndex = $autoIndex
                     } else {
-                        Write-Host "Invalid input. Please enter a number between 1 and $($usbDrives.Count)." -ForegroundColor Red
-                        $usbIndex = -1
+                        Write-Warn "Specified USB drive '$USBDrive' was not found in the detected USB drives. Please select manually."
                     }
-                } while ($usbIndex -lt 0)
+                }
+
+                if ($usbIndex -lt 0) {
+                    do {
+                        $usbSelection = Read-Host "`nSelect USB drive (1-$($usbDrives.Count))"
+                        # Try to parse as integer, handle invalid input
+                        $parsed = 0
+                        if ([int]::TryParse($usbSelection, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le $usbDrives.Count) {
+                            $usbIndex = $parsed - 1
+                        } else {
+                            Write-Host "Invalid input. Please enter a number between 1 and $($usbDrives.Count)." -ForegroundColor Red
+                            $usbIndex = -1
+                        }
+                    } while ($usbIndex -lt 0)
+                }
                 
                 $selectedUSB = $usbDrives[$usbIndex]
                 
@@ -857,7 +955,10 @@ function Main {
             Write-Success "install.wim copied"
         }
         
-        # Step 8: Copy EDS folder
+        # Step 8: Modify boot.wim with EDS customizations (Entrypoint.ps1 + winpeshl.ini)
+        Invoke-BootWimModification -TargetPath $targetPath
+
+        # Step 9: Copy EDS folder
         Copy-EDSFolder -TargetDrive $targetPath
         
         # Step 9: Create ISO file (if requested)
